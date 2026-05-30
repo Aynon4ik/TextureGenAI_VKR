@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PBR Preview</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #121418; }
+    canvas { display: block; width: 100%; height: 100%; }
+    #status {
+      position: absolute; left: 12px; bottom: 10px;
+      color: rgba(255,255,255,0.55); font: 12px/1.4 system-ui, sans-serif;
+      pointer-events: none; user-select: none;
+    }
+    #fs-btn {
+      position: absolute; top: 10px; right: 10px; z-index: 10;
+      width: 36px; height: 36px; padding: 0; border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 8px; background: rgba(18, 20, 24, 0.72);
+      color: rgba(255,255,255,0.88); cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      backdrop-filter: blur(6px);
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+    #fs-btn:hover {
+      background: rgba(40, 44, 52, 0.92);
+      border-color: rgba(255,255,255,0.32);
+    }
+    #fs-btn svg { width: 18px; height: 18px; fill: currentColor; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <button type="button" id="fs-btn" title="На весь экран" aria-label="На весь экран">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+  </button>
+  <div id="status">Загрузка HDR…</div>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+    import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+    import { EXRLoader } from "three/addons/loaders/EXRLoader.js";
+
+    const statusEl = document.getElementById("status");
+    const fsBtn = document.getElementById("fs-btn");
+    const FS_ENTER_ICON = fsBtn.innerHTML;
+    const FS_EXIT_ICON =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>';
+
+    function syncFullscreenUi() {
+      const on = Boolean(document.fullscreenElement);
+      fsBtn.innerHTML = on ? FS_EXIT_ICON : FS_ENTER_ICON;
+      fsBtn.title = on ? "Выйти из полноэкранного режима" : "На весь экран";
+      fsBtn.setAttribute("aria-label", fsBtn.title);
+      window.dispatchEvent(new Event("resize"));
+    }
+
+    fsBtn.addEventListener("click", async () => {
+      try {
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+        } else {
+          await document.documentElement.requestFullscreen();
+        }
+      } catch (err) {
+        console.warn("Fullscreen:", err);
+      }
+    });
+    document.addEventListener("fullscreenchange", syncFullscreenUi);
+
+    const params = new URLSearchParams(location.search);
+
+    const PRESETS = {
+      studio: {
+        url: params.get("studio"),
+        exposure: 1.0,
+        blur: 0.45,
+      },
+      outdoor: {
+        url: params.get("outdoor"),
+        exposure: 2.15,
+        blur: 0.35,
+      },
+    };
+
+    let activeEnv = params.get("env") === "outdoor" ? "outdoor" : "studio";
+    const envMaps = { studio: null, outdoor: null };
+    let currentRoot = null;
+    let viewerReady = false;
+    let pendingModelUrl = null;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = PRESETS[activeEnv].exposure;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.05, 200);
+    camera.position.set(2.4, 1.6, 2.8);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.target.set(0, 0, 0);
+
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    pmrem.compileEquirectangularShader();
+
+    const exrLoader = new EXRLoader();
+    const gltfLoader = new GLTFLoader();
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    function applyEnv(key) {
+      if (!envMaps[key]) {
+        setStatus("Загрузка HDR…");
+        loadEnv(key)
+          .then(() => applyEnv(key))
+          .catch(() => setStatus("Ошибка HDR"));
+        return;
+      }
+      activeEnv = key;
+      const p = PRESETS[key];
+      scene.environment = envMaps[key];
+      scene.background = envMaps[key];
+      scene.backgroundBlurriness = p.blur;
+      scene.backgroundIntensity = 1.0;
+      renderer.toneMappingExposure = p.exposure;
+      setStatus(key === "studio" ? "Студия" : "Улица");
+    }
+
+    function loadEnv(key) {
+      const p = PRESETS[key];
+      if (!p.url) return Promise.reject(new Error("missing url: " + key));
+      return new Promise((resolve, reject) => {
+        exrLoader.load(
+          p.url,
+          (tex) => {
+            tex.mapping = THREE.EquirectangularReflectionMapping;
+            envMaps[key] = pmrem.fromEquirectangular(tex).texture;
+            tex.dispose();
+            resolve();
+          },
+          undefined,
+          reject,
+        );
+      });
+    }
+
+    function fitCamera(obj) {
+      const box = new THREE.Box3().setFromObject(obj);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z, 0.001);
+      const dist = maxDim * 1.85;
+      controls.target.copy(center);
+      camera.position.set(center.x + dist, center.y + dist * 0.55, center.z + dist);
+      camera.near = maxDim / 100;
+      camera.far = maxDim * 100;
+      camera.updateProjectionMatrix();
+      controls.update();
+    }
+
+    function resolveUrl(url) {
+      if (!url) return url;
+      if (url.startsWith("http://") || url.startsWith("https://")) return url;
+      if (url.startsWith("/")) return window.location.origin + url;
+      return url;
+    }
+
+    function loadModel(url) {
+      if (!url) return;
+      const loadUrl = resolveUrl(url);
+      setStatus("Загрузка модели…");
+      gltfLoader.load(
+        loadUrl,
+        (gltf) => {
+          if (currentRoot) {
+            scene.remove(currentRoot);
+            currentRoot.traverse((c) => {
+              if (c.geometry) c.geometry.dispose();
+              if (c.material) {
+                const mats = Array.isArray(c.material) ? c.material : [c.material];
+                mats.forEach((m) => {
+                  for (const k of Object.keys(m)) {
+                    const v = m[k];
+                    if (v && v.isTexture) v.dispose();
+                  }
+                  m.dispose();
+                });
+              }
+            });
+          }
+          currentRoot = gltf.scene;
+          scene.add(currentRoot);
+          fitCamera(currentRoot);
+          applyEnv(activeEnv);
+        },
+        undefined,
+        (err) => {
+          console.error("GLB load failed:", loadUrl, err);
+          setStatus("Ошибка загрузки модели");
+        },
+      );
+    }
+
+    function requestModel(url) {
+      if (!url) return;
+      if (viewerReady) loadModel(url);
+      else pendingModelUrl = url;
+    }
+
+    window.addEventListener("message", (ev) => {
+      const d = ev.data || {};
+      if (d.type === "setEnv") {
+        const key = d.label === "Улица" || d.scene === "outdoor" ? "outdoor" : "studio";
+        applyEnv(key);
+      }
+      if (d.type === "loadModel" && d.url) requestModel(d.url);
+    });
+
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    (async () => {
+      try {
+        setStatus("Загрузка HDR…");
+        await loadEnv(activeEnv);
+        applyEnv(activeEnv);
+        viewerReady = true;
+        try {
+          window.parent.postMessage({ type: "pbrViewerReady" }, "*");
+        } catch (_) {}
+        const glb = params.get("glb");
+        if (glb) requestModel(glb);
+        else if (pendingModelUrl) {
+          loadModel(pendingModelUrl);
+          pendingModelUrl = null;
+        }
+        const other = activeEnv === "studio" ? "outdoor" : "studio";
+        loadEnv(other).catch((err) => console.warn("HDR bg load:", err));
+      } catch (err) {
+        console.error(err);
+        setStatus("Ошибка HDR");
+      }
+    })();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+  </script>
+</body>
+</html>

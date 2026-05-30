@@ -1,0 +1,13 @@
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.idea/
+.vscode/
+models/preview_cache/
+textures_dataset/
+*.zip
+desktop.ini
+Thumbs.db

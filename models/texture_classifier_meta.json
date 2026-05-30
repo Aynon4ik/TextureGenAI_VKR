@@ -1,0 +1,9 @@
+{
+  "classes": ["tiles", "metal", "wood", "fabrics", "bricks"],
+  "architecture": "resnet18",
+  "recipe": "balanced",
+  "best_val_accuracy": 0.795,
+  "total_samples": 996,
+  "note": "Restored pre-cleanup weights; trained on dataset before manual review of acg/ms files.",
+  "eval_report": "models/eval_supplement/eval_report.json"
+}
