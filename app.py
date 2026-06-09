@@ -636,10 +636,24 @@ button[title="share"], [aria-label="share"],
     display: none !important;
 }
 
-/* ── Hide colored label blocks ────────────────────── */
-.svelte-jdcl7l, span.svelte-jdcl7l {
-    background: transparent !important;
-    border: none !important;
+/* ── Подписи поверх изображений и галерей ─────────── */
+#ref-image-upload label,
+#gen-results-gallery label,
+#agent-attempts-gallery label,
+.gradio-container .image-container label.float,
+.gradio-container .gallery label.float {
+    background: #ffffff !important;
+    color: #334155 !important;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12) !important;
+    border: 1px solid #e2e8f0 !important;
+    opacity: 1 !important;
+}
+#ref-image-upload label span,
+#gen-results-gallery label span,
+#agent-attempts-gallery label span,
+.gradio-container .image-container label.float span,
+.gradio-container .gallery label.float span {
+    opacity: 1 !important;
 }
 
 /* ── Hide fullscreen button ──────────────────────── */
@@ -802,9 +816,9 @@ button[title="Full screen"],
 .preview-controls-panel {
     gap: 10px !important;
     padding: 12px !important;
-    border: 1px solid var(--border-color-primary, #333) !important;
+    border: 1px solid var(--border-color-primary, #e2e8f0) !important;
     border-radius: 10px !important;
-    background: var(--background-fill-secondary, rgba(255,255,255,0.03)) !important;
+    background: var(--background-fill-secondary, #f8fafc) !important;
     margin-bottom: 10px !important;
 }
 .preview-actions-block > .block:first-child button {
@@ -830,7 +844,8 @@ button[title="Full screen"],
     border-radius: 8px !important;
     overflow: hidden !important;
     padding: 0 !important;
-    background: #121418 !important;
+    background: #f1f5f9 !important;
+    border: 1px solid #e2e8f0 !important;
 }
 #preview-viewer-wrap .html-container,
 #preview-viewer-wrap .prose,
@@ -890,8 +905,39 @@ button[title="Full screen"],
 }
 """
 
+FORCE_LIGHT_JS = """
+(function () {
+  function forceLight() {
+    document.documentElement.classList.remove("dark");
+    document.querySelectorAll(".dark").forEach(function (el) {
+      el.classList.remove("dark");
+    });
+  }
+  forceLight();
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", forceLight);
+  }
+  new MutationObserver(forceLight).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["class"],
+    subtree: true,
+  });
+  var mq = window.matchMedia("(prefers-color-scheme: dark)");
+  if (mq.addEventListener) {
+    mq.addEventListener("change", forceLight);
+  } else if (mq.addListener) {
+    mq.addListener(forceLight);
+  }
+})();
+"""
+
 CUSTOM_HEAD = (
     """
+<script>
+"""
+    + FORCE_LIGHT_JS
+    + """
+</script>
 <style>
   .gradio-container { max-width: 100% !important; }
   .gradio-container-6-10-0 #ref-image-wrap .placeholder,
@@ -959,17 +1005,33 @@ theme = gr.themes.Soft(
     font=["system-ui", "Segoe UI", "sans-serif"],
     font_mono=["Consolas", "monospace"],
 ).set(
-    body_background_fill="*neutral_50",
+    body_background_fill="#f8fafc",
+    body_background_fill_dark="#f8fafc",
+    body_text_color="*neutral_800",
+    body_text_color_dark="*neutral_800",
+    background_fill_primary="white",
+    background_fill_primary_dark="white",
+    background_fill_secondary="#f8fafc",
+    background_fill_secondary_dark="#f8fafc",
     block_background_fill="white",
+    block_background_fill_dark="white",
     block_border_width="0px",
     block_shadow="0 1px 3px rgba(0,0,0,0.08)",
-    block_label_background_fill="transparent",
+    block_label_background_fill="white",
+    block_label_background_fill_dark="white",
+    block_label_text_color="*neutral_700",
+    block_label_text_color_dark="*neutral_700",
+    block_label_border_color="*neutral_200",
+    block_label_border_color_dark="*neutral_200",
     input_background_fill="white",
+    input_background_fill_dark="white",
+    border_color_primary="*neutral_200",
+    border_color_primary_dark="*neutral_200",
     button_primary_background_fill="*primary_500",
     button_primary_text_color="white",
 )
 
-with gr.Blocks(title="TextureGen AI") as demo:
+with gr.Blocks(title="TextureGen AI", theme=theme) as demo:
 
     with gr.Row(elem_classes="title-row"):
         gr.Markdown("# TextureGen AI")
